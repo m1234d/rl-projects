@@ -8,6 +8,14 @@ from collections import deque# Ordered collection with ends
 import random
 import warnings # This ignore all the warning messages that are normally printed during the training because of skiimage
 warnings.filterwarnings('ignore')
+import os
+import pprint
+
+with tf.Session() as session:
+  devices = session.list_devices()
+    
+print('devices:')
+pprint.pprint(devices)
 
 env = retro.make(game='SpaceInvaders-Atari2600')
 possible_actions = np.array(np.identity(env.action_space.n,dtype=int).tolist())
@@ -20,6 +28,7 @@ learning_rate = 0.00025
 
 # Training Hyperparameters
 total_episodes = 50
+total_test_episodes = 1
 max_steps = 50000
 batch_size = 64
 
@@ -202,6 +211,7 @@ def main():
     saver = tf.train.Saver()
     if training:
         rewards_list = []
+        
         with tf.Session() as sess:
             #initialize weights
             sess.run(tf.global_variables_initializer())
@@ -209,6 +219,9 @@ def main():
             #initialize decay
             decay_step = 0
             
+            #initialize loss
+            loss = 0
+            print("Network initialized.")
             for episode in range(total_episodes):
                 #initialize environment
                 step = 0
@@ -240,7 +253,7 @@ def main():
                         
                         print('Episode: {}'.format(episode),
                                   'Total reward: {}'.format(total_reward),
-                                  'Explore P: {:.4f}'.format(explore_probability),
+                                  'Explore P: {:.4f}'.format(eps),
                                 'Training Loss {:.4f}'.format(loss))
 
                         rewards_list.append((episode, total_reward))
@@ -278,7 +291,7 @@ def main():
                             
                     # optimize weights
                     
-                    sess.run(network.optimizer, feed_dict={network.inputs_: sample_states, network.actions_: sample_actions, network.target_Q: sample_target_qs})
+                    loss, _ = sess.run([network.loss, network.optimizer], feed_dict={network.inputs_: sample_states, network.actions_: sample_actions, network.target_Q: sample_target_qs})
                     
                     summary = sess.run(write_op, feed_dict={network.inputs_: sample_states, network.actions_: sample_actions, network.target_Q: sample_target_qs})
                     
@@ -288,5 +301,40 @@ def main():
                 if episode % 5 == 0:
                     save_path = saver.save(sess, "./models/model.ckpt")
                     print("Model Saved")
+    
+    # Test model
+    with tf.Session() as sess:
+        total_test_rewards = []
         
+        saver.restore("./models/model.ckpt")
+        
+        for episode in range(total_test_episodes):
+            total_rewards = 0
+            
+            state = env.reset()
+            state,stacked_frames = stack_frames(stacked_frames,state,True)
+            
+            print("Beginning episode ", episode)
+            
+            while True:
+                
+                q_values = sess.run(network.output, feed_dict={network.inputs_: state.reshape((1, *state.shape))})
+                action_index = np.argmax(q_values)
+                action_choice = possible_actions[action_index]
+                
+                next_state, reward, done, _ = env.step(action_choice)
+                total_rewards += reward
+                
+                env.render()
+                
+                if done:
+                    print("Score: ", total_rewards)
+                    total_test_rewards.append(total_rewards)
+                    break
+                
+                next_state, stacked_frames = stack_frames(stacked_frames, next_state, False)
+                state = next_state
+            
+    env.close()
+    
 main()
