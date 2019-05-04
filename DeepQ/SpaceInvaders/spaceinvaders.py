@@ -18,4 +18,8 @@ import warnings # This ignore all the warning messages that are normally printed
 warnings.filterwarnings('ignore')
 
 env = retro.make(game='SpaceInvaders-Atari2600')
+env.reset()
 env.render()
+while(True):
+    env.step(env.action_space.sample())
+    env.render()
