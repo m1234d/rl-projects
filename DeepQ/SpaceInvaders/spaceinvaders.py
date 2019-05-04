@@ -172,19 +172,121 @@ def initialize_memory():
             state=next_state
     return memory, stacked_frames
         
-
+def get_action(epsilon_initial, epsilon_final, decay_rate, decay_step, state, network, sess):
+    # decay epsilon
+    new_eps = epsilon_final + (epsilon_final - epsilon_initial) * np.exp(-decay_rate * decay_step)
+    rand_value = random.uniform(0, 1)
+    
+    if rand_value < new_eps:
+        action_choice = possible_actions[random.randint(0, len(possible_actions) - 1)]
+    else:
+        q_values = sess.run(network.output, feed_dict={network.inputs_: state.reshape((1, *state.shape))})
+        action_index = np.argmax(q_values)
+        action_choice = possible_actions[action_index]
+    
+    return action_choice, new_eps
+    
     
 def main():
+    print("Running")
     tf.reset_default_graph()
     network = DQNetwork(state_size, action_size, learning_rate)
     
-    writer = tf.summary.FileWriter("/tensorboard/dqn/1")
+    writer = tf.summary.FileWriter("./tensorboard/dqn/1")
     tf.summary.scalar("Loss", network.loss)
     write_op = tf.summary.merge_all()
     
     
     memory, stacked_frames = initialize_memory()
-        
     
+    saver = tf.train.Saver()
+    if training:
+        rewards_list = []
+        with tf.Session() as sess:
+            #initialize weights
+            sess.run(tf.global_variables_initializer())
+
+            #initialize decay
+            decay_step = 0
+            
+            for episode in range(total_episodes):
+                #initialize environment
+                step = 0
+                state = env.reset()
+                
+                episode_rewards = []
+                
+                state,stacked_frames = stack_frames(stacked_frames, state, True)
+                
+                while (step < max_steps):
+                    # play game
+                    step += 1
+                    decay_step += 1
+                    action_choice, eps = get_action(explore_start, explore_stop, decay_rate, decay_step, state, network, sess)
+                    new_state, reward, done, _ = env.step(action_choice)
+                    
+                    if episode_render:
+                        env.render()
+                        
+                    episode_rewards.append(reward)
+                    
+                    if done:
+                        new_state = np.zeros((110,84), dtype=int)
+                        new_state, stacked_frames = stack_frames(stacked_frames, new_state, False)
+                        
+                        step = max_steps
+                        
+                        total_reward = np.sum(episode_rewards)
+                        
+                        print('Episode: {}'.format(episode),
+                                  'Total reward: {}'.format(total_reward),
+                                  'Explore P: {:.4f}'.format(explore_probability),
+                                'Training Loss {:.4f}'.format(loss))
+
+                        rewards_list.append((episode, total_reward))
+                        
+                        new_transition = (state, action_choice, reward, new_state, done)
+                        memory.add(new_transition)
+                        
+                        
+                    else:
+                        new_state, stacked_frames = stack_frames(stacked_frames, new_state, False)
+                        
+                        new_transition = (state, action_choice, reward, new_state, done)
+                        memory.add(new_transition)
+                        
+                        state = new_state
+                    
+                    # train network
+                    
+                    sample_transitions = memory.sample(batch_size) #shape: (64, 5)
+                    sample_states = np.array([transition[0] for transition in sample_transitions])
+                    sample_actions = np.array([transition[1] for transition in sample_transitions])
+                    sample_rewards = np.array([transition[2] for transition in sample_transitions])
+                    sample_dones = np.array([transition[4] for transition in sample_transitions])
+                    sample_next_states = np.array([transition[3] for transition in sample_transitions])
+                    
+                    sample_target_qs = []
+                    
+                    sample_q_next_states = sess.run(network.output, feed_dict = {network.inputs_: sample_next_states})
+                    
+                    for i in range(len(sample_transitions)):
+                        if sample_dones[i]:
+                            sample_target_qs.append(sample_rewards[i])
+                        else:
+                            sample_target_qs.append(sample_rewards[i] + gamma*np.max(sample_q_next_states[i]))
+                            
+                    # optimize weights
+                    
+                    sess.run(network.optimizer, feed_dict={network.inputs_: sample_states, network.actions_: sample_actions, network.target_Q: sample_target_qs})
+                    
+                    summary = sess.run(write_op, feed_dict={network.inputs_: sample_states, network.actions_: sample_actions, network.target_Q: sample_target_qs})
+                    
+                    writer.add_summary(summary, episode)
+                    writer.flush()
+                
+                if episode % 5 == 0:
+                    save_path = saver.save(sess, "./models/model.ckpt")
+                    print("Model Saved")
         
 main()
