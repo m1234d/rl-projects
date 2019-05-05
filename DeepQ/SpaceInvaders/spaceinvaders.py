@@ -10,7 +10,8 @@ import warnings # This ignore all the warning messages that are normally printed
 warnings.filterwarnings('ignore')
 import os
 import pprint
-
+import psutil
+process = psutil.Process(os.getpid())
 with tf.Session() as session:
   devices = session.list_devices()
     
@@ -27,7 +28,7 @@ action_size = env.action_space.n
 learning_rate = 0.00025
 
 # Training Hyperparameters
-total_episodes = 50
+total_episodes = 210
 total_test_episodes = 1
 max_steps = 50000
 batch_size = 64
@@ -42,7 +43,7 @@ gamma = 0.9
 
 # Memory Hyperparameters
 pretrain_length = batch_size #initial memory size
-memory_size = 1000000
+memory_size = 30000 #1000000
 
 # Preprocessing Hyperparameters
 stack_size = 4
@@ -50,6 +51,7 @@ stack_size = 4
 # Misc. Hyperparameters
 training = True
 episode_render = False
+restart = True
 
 # Deep-Q Network
 class DQNetwork():
@@ -183,7 +185,7 @@ def initialize_memory():
         
 def get_action(epsilon_initial, epsilon_final, decay_rate, decay_step, state, network, sess):
     # decay epsilon
-    new_eps = epsilon_final + (epsilon_final - epsilon_initial) * np.exp(-decay_rate * decay_step)
+    new_eps = epsilon_final + (epsilon_initial - epsilon_final) * np.exp(-decay_rate * decay_step)
     rand_value = random.uniform(0, 1)
     
     if rand_value < new_eps:
@@ -211,10 +213,14 @@ def main():
     saver = tf.train.Saver()
     if training:
         rewards_list = []
-        
-        with tf.Session() as sess:
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        with tf.Session(config = config) as sess:
             #initialize weights
-            sess.run(tf.global_variables_initializer())
+            if restart:
+                sess.run(tf.global_variables_initializer())
+            else:
+                saver.restore(sess, "./models/model.ckpt")
 
             #initialize decay
             decay_step = 0
@@ -254,7 +260,10 @@ def main():
                         print('Episode: {}'.format(episode),
                                   'Total reward: {}'.format(total_reward),
                                   'Explore P: {:.4f}'.format(eps),
-                                'Training Loss {:.4f}'.format(loss))
+                                'Training Loss {:.4f}'.format(loss),
+                                'Decay Step: {}'.format(decay_step),
+                                'RAM: {}'.format(process.memory_info().rss),
+                                'Memory Size: {}'.format(len(memory.buffer)))
 
                         rewards_list.append((episode, total_reward))
                         
@@ -306,7 +315,7 @@ def main():
     with tf.Session() as sess:
         total_test_rewards = []
         
-        saver.restore("./models/model.ckpt")
+        saver.restore(sess, "./models/model.ckpt")
         
         for episode in range(total_test_episodes):
             total_rewards = 0
