@@ -90,7 +90,7 @@ class DQNetwork():
             self.conv2_out = tf.nn.elu(self.conv2,name="conv2_out")
             
             self.conv3 = tf.layers.conv2d(inputs=self.conv2_out,
-            filters=64,
+            filters=128,
             kernel_size=[3,3],
             strides=[2,2],
             padding="VALID",
@@ -108,6 +108,7 @@ class DQNetwork():
             
             self.output = tf.layers.dense(inputs=self.fc,
             units=self.action_size,
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
             activation=None)
             
             self.Q = tf.reduce_sum(tf.multiply(self.output, self.actions_)) # list of q-values per possible action
@@ -304,6 +305,7 @@ def main():
                     
                     sample_q_next_states = sess.run(network.output, feed_dict = {network.inputs_: sample_next_states})
                     
+
                     for i in range(len(sample_transitions)):
                         if sample_dones[i]:
                             sample_target_qs.append(sample_rewards[i])
@@ -312,9 +314,11 @@ def main():
                             
                     # optimize weights
                     
-                    loss, _ = sess.run([network.loss, network.optimizer], feed_dict={network.inputs_: sample_states, network.actions_: sample_actions, network.target_Q: sample_target_qs})
+                    targets = np.array([each for each in sample_target_qs])
                     
-                    summary = sess.run(write_op, feed_dict={network.inputs_: sample_states, network.actions_: sample_actions, network.target_Q: sample_target_qs})
+                    loss, _ = sess.run([network.loss, network.optimizer], feed_dict={network.inputs_: sample_states, network.actions_: sample_actions, network.target_Q: targets})
+                    
+                    summary = sess.run(write_op, feed_dict={network.inputs_: sample_states, network.actions_: sample_actions, network.target_Q: targets})
                     
                     writer.add_summary(summary, episode)
                     writer.flush()
