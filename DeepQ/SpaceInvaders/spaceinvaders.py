@@ -11,6 +11,7 @@ warnings.filterwarnings('ignore')
 import os
 import pprint
 import psutil
+import gym
 process = psutil.Process(os.getpid())
 with tf.Session() as session:
   devices = session.list_devices()
@@ -18,7 +19,8 @@ with tf.Session() as session:
 print('devices:')
 pprint.pprint(devices)
 
-env = retro.make(game='SpaceInvaders-Atari2600')
+env = gym.make('SpaceInvadersDeterministic-v4')
+#env = retro.make('SpaceInvaders-Atari2600')
 possible_actions = np.array(np.identity(env.action_space.n,dtype=int).tolist())
 print(possible_actions)
     
@@ -29,7 +31,7 @@ learning_rate = 0.00025
 
 # Training Hyperparameters
 total_episodes = 210
-total_test_episodes = 1
+total_test_episodes = 2
 max_steps = 50000
 batch_size = 64
 
@@ -49,9 +51,9 @@ memory_size = 30000 #1000000
 stack_size = 4
 
 # Misc. Hyperparameters
-training = True
+training = False
 episode_render = False
-restart = True
+restart = False
 
 # Deep-Q Network
 class DQNetwork():
@@ -169,7 +171,8 @@ def initialize_memory():
         
         randChoice = random.randint(0, len(possible_actions)-1)
         action = possible_actions[randChoice]
-        next_state,reward,done,_ = env.step(action)
+        
+        next_state,reward,done,_ = env.step(randChoice)
         
         next_state, stacked_frames = stack_frames(stacked_frames, next_state, False)
         
@@ -242,7 +245,12 @@ def main():
                     step += 1
                     decay_step += 1
                     action_choice, eps = get_action(explore_start, explore_stop, decay_rate, decay_step, state, network, sess)
-                    new_state, reward, done, _ = env.step(action_choice)
+                    action_index = 0
+                    for i in range(len(action_choice)):
+                        if action_choice[i] == 1:
+                            action_index = i
+                            
+                    new_state, reward, done, _ = env.step(action_index)
                     
                     if episode_render:
                         env.render()
@@ -330,8 +338,8 @@ def main():
                 q_values = sess.run(network.output, feed_dict={network.inputs_: state.reshape((1, *state.shape))})
                 action_index = np.argmax(q_values)
                 action_choice = possible_actions[action_index]
-                
-                next_state, reward, done, _ = env.step(action_choice)
+                                
+                next_state, reward, done, _ = env.step(action_index) #action_choice
                 total_rewards += reward
                 
                 env.render()
