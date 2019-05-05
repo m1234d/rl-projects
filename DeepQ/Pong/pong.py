@@ -11,7 +11,9 @@ warnings.filterwarnings('ignore')
 import os
 import pprint
 import psutil
+import sys
 import gym
+import matplotlib.pyplot as plt
 process = psutil.Process(os.getpid())
 with tf.Session() as session:
   devices = session.list_devices()
@@ -25,7 +27,8 @@ possible_actions = np.array(np.identity(env.action_space.n,dtype=int).tolist())
 print(possible_actions)
     
 # Model Hyperparameters
-state_size = [110,84,4] #4 frames of 110x84
+state_size = [84,84,4] #4 frames of 110x84
+state_size_tuple = tuple(state_size[0:2])
 action_size = env.action_space.n
 learning_rate = 0.00025
 
@@ -45,7 +48,7 @@ gamma = 0.9
 
 # Memory Hyperparameters
 pretrain_length = batch_size #initial memory size
-memory_size = 30000 #1000000
+memory_size = 50000 #1000000
 
 # Preprocessing Hyperparameters
 stack_size = 4
@@ -138,8 +141,9 @@ def preprocess_frame(frame):
     cropped_frame = gray
     
     normalized_frame = cropped_frame/255.0
-    
-    preprocessed_frame = transform.resize(cropped_frame, [110,84])
+    preprocessed_frame = transform.resize(cropped_frame, state_size[0:2])
+    preprocessed_frame = preprocessed_frame.astype('float32')
+ 
     return preprocessed_frame
 
 
@@ -163,7 +167,7 @@ def stack_frames(stacked_frames, state, is_new_episode):
     return stacked_state,stacked_frames
 
 def initialize_memory():
-    stacked_frames = deque([np.zeros((110,84),dtype=np.int) for i in range(stack_size)], maxlen=stack_size)
+    stacked_frames = deque([np.zeros(state_size_tuple,dtype=np.int) for i in range(stack_size)], maxlen=stack_size)
     memory = Memory(max_size=memory_size)
     for i in range(pretrain_length):
         if i == 0:
@@ -259,7 +263,7 @@ def main():
                     episode_rewards.append(reward)
                     
                     if done:
-                        new_state = np.zeros((110,84), dtype=int)
+                        new_state = np.zeros(state_size_tuple, dtype=int)
                         new_state, stacked_frames = stack_frames(stacked_frames, new_state, False)
                         
                         step = max_steps
@@ -275,14 +279,13 @@ def main():
                                 'Memory Size: {}'.format(len(memory.buffer)))
 
                         rewards_list.append((episode, total_reward))
-                        
                         new_transition = (state, action_choice, reward, new_state, done)
                         memory.add(new_transition)
                         
                         
                     else:
                         new_state, stacked_frames = stack_frames(stacked_frames, new_state, False)
-                        
+            
                         new_transition = (state, action_choice, reward, new_state, done)
                         memory.add(new_transition)
                         
