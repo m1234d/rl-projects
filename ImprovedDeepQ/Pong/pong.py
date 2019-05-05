@@ -1,0 +1,407 @@
+import tensorflow as tf      # Deep Learning library
+import numpy as np           # Handle matrices
+import retro                 # Retro Environment
+from skimage import transform # Help us to preprocess the frames
+from skimage.color import rgb2gray # Help us to gray our frames
+import matplotlib.pyplot as plt # Display graphs
+from collections import deque# Ordered collection with ends
+import random
+import warnings # This ignore all the warning messages that are normally printed during the training because of skiimage
+warnings.filterwarnings('ignore')
+import os
+import pprint
+import psutil
+import sys
+import gym
+import matplotlib.pyplot as plt
+process = psutil.Process(os.getpid())
+with tf.Session() as session:
+  devices = session.list_devices()
+    
+print('devices:')
+pprint.pprint(devices)
+
+env = gym.make('PongDeterministic-v4')
+#env = retro.make('SpaceInvaders-Atari2600')
+possible_actions = np.array(np.identity(env.action_space.n,dtype=int).tolist())
+print(possible_actions)
+    
+# Model Hyperparameters
+state_size = [84,84,4] #4 frames of 110x84
+state_size_tuple = tuple(state_size[0:2])
+action_size = env.action_space.n
+learning_rate = 0.00025
+
+# Training Hyperparameters
+total_episodes = 1000
+total_test_episodes = 2
+max_steps = 50000
+batch_size = 64
+max_tau = 10000
+
+# Epsilon values
+explore_start = 1.0
+explore_stop = 0.01
+decay_rate = 0.00001
+
+# Discount
+gamma = 0.9
+
+# Memory Hyperparameters
+pretrain_length = batch_size #initial memory size
+memory_size = 50000 #1000000
+
+# Preprocessing Hyperparameters
+stack_size = 4
+
+# Misc. Hyperparameters
+training = True
+episode_render = False
+restart = True
+
+# Deep-Q Network
+class DQNetwork():
+    def __init__(self, state_size, action_size, learning_rate, name='DQNet'):
+        self.state_size = state_size
+        self.action_size = action_size
+        self.learning_rate = learning_rate
+        
+        with tf.variable_scope(name):
+            self.inputs_ = tf.placeholder(tf.float32,[None,*self.state_size], name="inputs")
+            self.actions_ = tf.placeholder(tf.float32, [None,self.action_size], name="actions_")
+            
+            self.target_Q = tf.placeholder(tf.float32, [None], name="target")
+            
+            self.conv1 = tf.layers.conv2d(inputs = self.inputs_,
+            filters=32,
+            kernel_size = [8,8],
+            strides=[4,4],
+            padding="VALID",
+            kernel_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
+            name="conv1")
+            self.conv1_out = tf.nn.elu(self.conv1, name="conv1_out")
+            
+            self.conv2 = tf.layers.conv2d(inputs = self.conv1_out,
+            filters=64,
+            kernel_size=[4,4],
+            strides=[2,2],
+            padding="VALID",
+            kernel_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
+            name="conv2")
+            self.conv2_out = tf.nn.elu(self.conv2,name="conv2_out")
+            
+            self.conv3 = tf.layers.conv2d(inputs=self.conv2_out,
+            filters=128,
+            kernel_size=[3,3],
+            strides=[2,2],
+            padding="VALID",
+            kernel_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
+            name="conv3")
+            self.conv3_out = tf.nn.elu(self.conv3, name="conv3_out")
+            
+            self.flatten = tf.contrib.layers.flatten(self.conv3_out)
+            
+            self.value_fc = tf.layers.dense(inputs = self.flatten,
+            units=512,
+            activation=tf.nn.elu,
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            name="value_fc")
+            
+            self.value = tf.layers.dense(inputs = self.value_fc,
+            units = 1,
+            activation = None,
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            name="value")
+            
+            self.advantage_fc = tf.layers.dense(inputs = self.flatten,
+            units=512,
+            activation=tf.nn.elu,
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            name="advantage_fc")
+            
+            self.advantage = tf.layers.dense(inputs = self.advantage_fc,
+            units=self.action_size,
+            activation = None,
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            name="advantage")
+            
+            self.output = self.value + tf.subtract(self.advantage, tf.reduce_mean(self.advantage, axis=1, keepdims=True))
+            
+            self.Q = tf.reduce_sum(tf.multiply(self.output, self.actions_), axis=1) # list of q-values per possible action
+            
+            self.loss = tf.reduce_mean(tf.square(self.target_Q - self.Q))
+            
+            self.optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+
+class Memory():
+    def __init__(self, max_size):
+        self.buffer = deque(maxlen=max_size)
+    
+    def add(self, experience):
+        self.buffer.append(experience)
+    
+    def sample(self, batch_size):
+        buffer_size = len(self.buffer)
+        indices = np.random.choice(np.arange(buffer_size), size=batch_size, replace=False)
+        
+        return [self.buffer[i] for i in indices]
+
+
+
+# Preproccessing functions
+
+#Grayscale and downscale
+def preprocess_frame(frame):
+    gray = rgb2gray(frame)
+    
+    #cropped_frame = gray[8:-12,4:-12]
+    cropped_frame = gray
+    
+    normalized_frame = cropped_frame/255.0
+    preprocessed_frame = transform.resize(cropped_frame, state_size[0:2])
+    preprocessed_frame = preprocessed_frame.astype('float32')
+ 
+    return preprocessed_frame
+
+
+def stack_frames(stacked_frames, state, is_new_episode):
+    frame = preprocess_frame(state)
+    if is_new_episode:
+        stacked_frames = deque([], maxlen=stack_size)
+        stacked_frames.append(frame)
+        stacked_frames.append(frame)
+        stacked_frames.append(frame)
+        stacked_frames.append(frame)
+        
+        
+        stacked_state = np.stack(stacked_frames,axis=2)
+    else:
+        #automatically removed oldest frame
+        stacked_frames.append(frame)
+        
+        stacked_state = np.stack(stacked_frames,axis=2)
+    
+    return stacked_state,stacked_frames
+
+def initialize_memory():
+    stacked_frames = deque([np.zeros(state_size_tuple,dtype=np.int) for i in range(stack_size)], maxlen=stack_size)
+    memory = Memory(max_size=memory_size)
+    for i in range(pretrain_length):
+        if i == 0:
+            state = env.reset()
+            state, stacked_frames = stack_frames(stacked_frames,state,True)
+        
+        randChoice = random.randint(0, len(possible_actions)-1)
+        action = possible_actions[randChoice]
+        
+        next_state,reward,done,_ = env.step(randChoice)
+        
+        next_state, stacked_frames = stack_frames(stacked_frames, next_state, False)
+        
+        if done:
+            next_state = np.zeros(state.shape)
+            memory.add((state,action,reward,next_state,done))
+            state = env.reset()
+            state,stacked_frames = stack_frames(stacked_frames, state, True)
+        else:
+            memory.add((state,action,reward,next_state,done))
+            state=next_state
+    return memory, stacked_frames
+
+def update_target_network():
+    dq_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "DQNetwork")
+    
+    target_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "TargetNetwork")
+    
+    operations = []
+    
+    for dq_param, target_param in zip(dq_params, target_params):
+        operations.append(target_param.assign(dq_param))
+    
+    return operations
+    
+    
+ 
+        
+def get_action(epsilon_initial, epsilon_final, decay_rate, decay_step, state, DQNet, sess):
+    # decay epsilon
+    new_eps = epsilon_final + (epsilon_initial - epsilon_final) * np.exp(-decay_rate * decay_step)
+    rand_value = random.uniform(0, 1)
+    
+    if rand_value < new_eps:
+        action_choice = possible_actions[random.randint(0, len(possible_actions) - 1)]
+    else:
+        q_values = sess.run(DQNet.output, feed_dict={DQNet.inputs_: state.reshape((1, *state.shape))})
+        action_index = np.argmax(q_values)
+        action_choice = possible_actions[action_index]
+    
+    return action_choice, new_eps
+    
+    
+def main():
+    print("Running")
+    tf.reset_default_graph()
+    DQNet = DQNetwork(state_size, action_size, learning_rate, name="DQNetwork")
+    TargetNetwork = DQNetwork(state_size, action_size, learning_rate, name="TargetNetwork")
+    writer = tf.summary.FileWriter("./tensorboard/dqn/1")
+    tf.summary.scalar("Loss", DQNet.loss)
+    write_op = tf.summary.merge_all()
+    
+    
+    memory, stacked_frames = initialize_memory()
+    
+    saver = tf.train.Saver()
+    if training:
+        rewards_list = []
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        with tf.Session(config = config) as sess:
+            #initialize weights
+            if restart:
+                sess.run(tf.global_variables_initializer())
+            else:
+                saver.restore(sess, "./models/model.ckpt")
+
+            #initialize decay
+            decay_step = 0
+            tau = 0
+            
+            #initialize loss
+            loss = 0
+            print("Network initialized.")
+            for episode in range(total_episodes):
+                #initialize environment
+                step = 0
+                state = env.reset()
+                
+                episode_rewards = []
+                
+                state,stacked_frames = stack_frames(stacked_frames, state, True)
+                
+                while (step < max_steps):
+                    # play game
+                    step += 1
+                    decay_step += 1
+                    tau += 1
+                    action_choice, eps = get_action(explore_start, explore_stop, decay_rate, decay_step, state, DQNet, sess)
+                    action_index = 0
+                    for i in range(len(action_choice)):
+                        if action_choice[i] == 1:
+                            action_index = i
+                            
+                    new_state, reward, done, _ = env.step(action_index)
+                    
+                    if episode_render:
+                        env.render()
+                        
+                    episode_rewards.append(reward)
+                    
+                    if done:
+                        new_state = np.zeros(state_size_tuple, dtype=int)
+                        new_state, stacked_frames = stack_frames(stacked_frames, new_state, False)
+                        
+                        step = max_steps
+                        
+                        total_reward = np.sum(episode_rewards)
+                        
+                        print('Episode: {}'.format(episode),
+                                  'Total reward: {}'.format(total_reward),
+                                  'Explore P: {:.4f}'.format(eps),
+                                'Training Loss {:.4f}'.format(loss),
+                                'Decay Step: {}'.format(decay_step),
+                                'RAM: {}'.format(process.memory_info().rss),
+                                'Memory Size: {}'.format(len(memory.buffer)))
+
+                        rewards_list.append((episode, total_reward))
+                        new_transition = (state, action_choice, reward, new_state, done)
+                        memory.add(new_transition)
+                        
+                        
+                    else:
+                        new_state, stacked_frames = stack_frames(stacked_frames, new_state, False)
+            
+                        new_transition = (state, action_choice, reward, new_state, done)
+                        memory.add(new_transition)
+                        
+                        state = new_state
+                    
+                    # train network
+                    
+                    sample_transitions = memory.sample(batch_size) #shape: (64, 5)
+                    sample_states = np.array([transition[0] for transition in sample_transitions])
+                    sample_actions = np.array([transition[1] for transition in sample_transitions])
+                    sample_rewards = np.array([transition[2] for transition in sample_transitions])
+                    sample_dones = np.array([transition[4] for transition in sample_transitions])
+                    sample_next_states = np.array([transition[3] for transition in sample_transitions])
+                    
+                    sample_target_qs = []
+                    
+                    dqnet_q_next_states = sess.run(DQNet.output, feed_dict={DQNet.inputs_: sample_next_states})
+                    
+                    next_action_indices = np.argmax(dqnet_q_next_states, axis=1)
+                    
+                    sample_q_next_states = sess.run(TargetNetwork.output, feed_dict = {TargetNetwork.inputs_: sample_next_states})
+                    
+                    
+                    for i in range(len(sample_transitions)):
+                        if sample_dones[i]:
+                            sample_target_qs.append(sample_rewards[i])
+                        else:
+                            sample_target_qs.append(sample_rewards[i] + gamma*sample_q_next_states[i] [next_action_indices[i]])
+                            
+                    # optimize weights
+                    
+                    targets = np.array([each for each in sample_target_qs])
+                    
+                    loss, _ = sess.run([DQNet.loss, DQNet.optimizer], feed_dict={DQNet.inputs_: sample_states, DQNet.actions_: sample_actions, DQNet.target_Q: targets})
+                    summary = sess.run(write_op, feed_dict={DQNet.inputs_: sample_states, DQNet.actions_: sample_actions, DQNet.target_Q: targets})
+                    
+                    writer.add_summary(summary, episode)
+                    writer.flush()
+                    
+                    if tau > max_tau:
+                        update_operation = update_target_network()
+                        sess.run(update_operation)
+                        tau = 0
+                        print("Target Network Synchronized.")
+                
+                if episode % 5 == 0:
+                    save_path = saver.save(sess, "./models/model.ckpt")
+                    print("Model Saved")
+    else:
+        # Test model
+        with tf.Session() as sess:
+            total_test_rewards = []
+            
+            saver.restore(sess, "./models/model.ckpt")
+            
+            for episode in range(total_test_episodes):
+                total_rewards = 0
+                
+                state = env.reset()
+                state,stacked_frames = stack_frames(stacked_frames,state,True)
+                
+                print("Beginning episode ", episode)
+                
+                while True:
+                    
+                    q_values = sess.run(DQNet.output, feed_dict={DQNet.inputs_: state.reshape((1, *state.shape))})
+                    action_index = np.argmax(q_values)
+                    action_choice = possible_actions[action_index]
+                                    
+                    next_state, reward, done, _ = env.step(action_index) #action_choice
+                    total_rewards += reward
+                    
+                    env.render()
+                    
+                    if done:
+                        print("Score: ", total_rewards)
+                        total_test_rewards.append(total_rewards)
+                        break
+                    
+                    next_state, stacked_frames = stack_frames(stacked_frames, next_state, False)
+                    state = next_state
+                
+    env.close()
+    
+main()
