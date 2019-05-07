@@ -2,4 +2,7 @@ These are my implementations of various reinforcement learning techniques. I am 
 
 Current Status:
 Q-Learning - DONE
-Deep Q Networks - Pong and Space Invaders
+
+Deep Q Networks - DONE
+
+Improved Deep Q Networks - Double Dueling Deep Q-Networks. Missing priority experience replay
