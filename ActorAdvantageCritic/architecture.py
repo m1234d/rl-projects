@@ -16,7 +16,7 @@ def fc_layer(inputs, nodes, activation_fn=tf.nn.relu, gain=1.0):
 # select_action: given a state, return action of that state
 
 class A2CNetwork(object):
-    def __init__(self, sess, observation_space, action_space, batches, steps, reuse = False):
+    def __init__(self, sess, observation_space, action_space, reuse = False):
         gain = np.sqrt(2)
         
         self.pdtype = make_pdtype(action_space)

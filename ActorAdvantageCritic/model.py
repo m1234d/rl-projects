@@ -33,9 +33,9 @@ class Model():
         rewards = tf.placeholder(tf.float32, [None], name="rewards")
         lr = tf.placeholder(tf.float32, name="learning_rate")
         
-        step_model = policy(sess, observation_space, action_space, number_envs, 1, reuse=False)
+        step_model = policy(sess, observation_space, action_space, reuse=False)
         
-        train_model = policy(sess, observation_space, action_space, number_envs*number_steps, number_steps, reuse=True)
+        train_model = policy(sess, observation_space, action_space, reuse=True)
         
         # Total Loss: policy gradient loss - (entropy * entropy_coefficient) + (value*value_coefficient)
         
@@ -120,6 +120,7 @@ class Runner(AbstractEnvRunner):
     def run(self):
         observations_list, actions_list, rewards_list, values_list, dones_list = [], [], [], [], []
         
+        # Play through nsteps to collect experiences
         for n in range(self.nsteps):
             actions,values = self.model.step(self.obs)
             
@@ -128,10 +129,12 @@ class Runner(AbstractEnvRunner):
             values_list.append(values)
             dones_list.append(np.copy(self.dones))
             
+
             self.obs[:], rewards, self.dones, _ = self.env.step(actions)
-            
+
             rewards_list.append(rewards)
         
+        # Reformat experiences
         observations_list = np.asarray(observations_list, dtype=np.uint8)
         actions_list = np.asarray(actions_list, dtype=np.int32)
         rewards_list = np.asarray(rewards_list, dtype=np.float32)
@@ -145,6 +148,8 @@ class Runner(AbstractEnvRunner):
         
         last_gae_lam = 0
         
+        print(observations_list.shape)
+        # Generate 
         for t in reversed(range(self.nsteps)):
             
             # if we are in a final state, there is no value of the next state, so set modifier (nextnonterminal) to 0
@@ -202,15 +207,16 @@ def learn(policy, env, nsteps, total_timesteps, gamma, lam, vf_coef, ent_coef, l
     if not restart:
         model.load("./models/model.ckpt")
 
+    # Construct runner which will generate observation batches
     runner = Runner(env, model, nsteps, total_timesteps, gamma, lam)
     
     time_first_start = time.time()
     
-    # For every batch of the game
+    # For every batch
     for update in range(1, total_timesteps // batch_size+1):
         time_start = time.time()
         
-        # Generate observations
+        # Generate batch of observations
         observations, actions, returns, values, rewards = runner.run()
         
         reward_sum = np.sum(rewards)
@@ -222,7 +228,7 @@ def learn(policy, env, nsteps, total_timesteps, gamma, lam, vf_coef, ent_coef, l
         for epoch in range(number_epochs):
             np.random.shuffle(indices)
             
-            # Feed minibatches to model for training
+            # Split into minibatches to feed to model for training
             for mini_start in range(0, batch_size, batch_train_size):
                 mini_end = mini_start + batch_train_size
                 mini_indices = indices[mini_start:mini_end]
