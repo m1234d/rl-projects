@@ -31,7 +31,7 @@ def main():
                     ent_coef=0.01,
                     lr=2e-4,
                     max_grad_norm=0.5,
-                    log_interval=10,
+                    log_interval=2,
                     restart=True)
 
 if __name__ == "__main__":

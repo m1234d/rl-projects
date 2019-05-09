@@ -120,6 +120,8 @@ class Runner(AbstractEnvRunner):
     def run(self):
         observations_list, actions_list, rewards_list, values_list, dones_list = [], [], [], [], []
         
+        end_scores = [0] * 10
+        end_scores_list = []
         # Play through nsteps to collect experiences
         for n in range(self.nsteps):
             actions,values = self.model.step(self.obs)
@@ -131,8 +133,15 @@ class Runner(AbstractEnvRunner):
             
 
             self.obs[:], rewards, self.dones, _ = self.env.step(actions)
-
+            
+            
             rewards_list.append(rewards)
+                
+            for i in range(len(self.dones)):
+                end_scores[i] += rewards[i]*100
+                if self.dones[i]:
+                    end_scores_list.append(end_scores[i])
+                    end_scores[i] = 0
         
         # Reformat experiences
         observations_list = np.asarray(observations_list, dtype=np.uint8)
@@ -147,9 +156,7 @@ class Runner(AbstractEnvRunner):
         advantages_list = np.zeros_like(rewards_list)
         
         last_gae_lam = 0
-        
-        print(observations_list.shape)
-        
+                
         # Generate advantages with GAE formula
         for t in reversed(range(self.nsteps)):
             
@@ -171,7 +178,7 @@ class Runner(AbstractEnvRunner):
         
         returns_list = advantages_list + values_list
         
-        return map(sf01, (observations_list, actions_list, returns_list, values_list, rewards_list))
+        return (*(map(sf01, (observations_list, actions_list, returns_list, values_list))), end_scores_list)
         
 def sf01(arr):
     s = arr.shape
@@ -214,6 +221,7 @@ def learn(policy, env, nsteps, total_timesteps, gamma, lam, vf_coef, ent_coef, l
     
     time_first_start = time.time()
     
+    reward_sum = 0
     # For every batch
     for update in range(1, total_timesteps // batch_size+1):
         time_start = time.time()
@@ -221,7 +229,11 @@ def learn(policy, env, nsteps, total_timesteps, gamma, lam, vf_coef, ent_coef, l
         # Generate batch of observations
         observations, actions, returns, values, rewards = runner.run()
         
-        reward_sum = np.sum(rewards)
+        reward_sum_new = np.mean(rewards)
+        if reward_sum == 0:
+            reward_sum = reward_sum_new
+        else:
+            reward_sum = (reward_sum * .9) + (reward_sum_new * 0.1)
         
         losses_list = []
         total_batches_train = 0
