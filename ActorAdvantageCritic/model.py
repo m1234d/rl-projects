@@ -149,7 +149,8 @@ class Runner(AbstractEnvRunner):
         last_gae_lam = 0
         
         print(observations_list.shape)
-        # Generate 
+        
+        # Generate advantages with GAE formula
         for t in reversed(range(self.nsteps)):
             
             # if we are in a final state, there is no value of the next state, so set modifier (nextnonterminal) to 0
@@ -166,6 +167,7 @@ class Runner(AbstractEnvRunner):
             # advantage. delta + gamma * lambda * next_non_terminal * last_gae_lam
             advantages_list[t] = delta + self.gamma * self.lam * next_non_terminal * last_gae_lam
             last_gae_lam = advantages_list[t]
+        
         
         returns_list = advantages_list + values_list
         
