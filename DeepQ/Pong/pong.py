@@ -33,7 +33,7 @@ action_size = env.action_space.n
 learning_rate = 0.00025
 
 # Training Hyperparameters
-total_episodes = 500
+total_episodes = 100
 total_test_episodes = 2
 max_steps = 50000
 batch_size = 64
@@ -54,9 +54,9 @@ memory_size = 50000 #1000000
 stack_size = 4
 
 # Misc. Hyperparameters
-training = True
-episode_render = False
-restart = True
+training = False
+episode_render = True
+restart = False
 
 # Deep-Q Network
 class DQNetwork():
@@ -330,7 +330,8 @@ def main():
         # Test model
         with tf.Session() as sess:
             total_test_rewards = []
-            
+            #sess.run(tf.global_variables_initializer())
+
             saver.restore(sess, "./models/model.ckpt")
             
             for episode in range(total_test_episodes):
